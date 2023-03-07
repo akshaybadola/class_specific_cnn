@@ -61,6 +61,11 @@ def get_keys(model, layers, layer_only=False):
 def check_track_for(track_for, keys):
     if isinstance(track_for, int):
         track_for = [keys[track_for]]
+    elif isinstance(track_for, tuple):
+        if track_for in keys:
+            track_for = [track_for]
+        else:
+            raise ValueError(f"Invalid layer to track {track_for}")
     elif isinstance(track_for, list):
         _track_for = []
         for t in track_for:
@@ -74,6 +79,11 @@ def check_track_for(track_for, keys):
     else:
         raise ValueError(f"Unknown type of track_for {track_for}")
     return track_for
+
+
+def _debug_hook(results, t, *x):
+    import ipdb; ipdb.set_trace()
+    results[t].append(x[-1])
 
 
 def get_outputs_at(model, model_name, dataloaders, track_for, gpu=0):
@@ -94,15 +104,17 @@ def get_outputs_at(model, model_name, dataloaders, track_for, gpu=0):
     labels = []
     # results = []
     for t in track_for:
-        layer = model.get_child(t)
+        mod = model.get_child(t)
         # only get output
-        layer.register_forward_hook(lambda *x: results[t].append(x[-1]))
+        mod.register_forward_hook(lambda *x: results[t].append(x[-1].detach().cpu()))
+        # debug_hook = partial(_debug_hook, results, t)
+        # mod.register_forward_hook(debug_hook)
     with torch.no_grad():
         for i, batch in enumerate(dataloaders["train"]):
             imgs, _labels = batch
             if have_cuda():
                 imgs = imgs.cuda(gpu)
-                labels.append(_labels.cpu().numpy())
+            labels.append(_labels.cpu().numpy())
             _ = model.forward(imgs)
             if (i + 1) % 100 == 0:
                 print(f"Done {i+1} iterations out of {total_iters}")
