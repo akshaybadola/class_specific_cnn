@@ -115,8 +115,7 @@ def validate_with_selectivity(model, val_loader, num_classes, hidden_outputs, gp
     # define activations
     temp = [None for _ in range(num_classes)]
     activations = dict(layer1=temp.copy(), layer2=temp.copy(), layer3=temp.copy(),
-                       layer4=temp.copy(),
-                       avgpool=temp.copy())
+                       layer4=temp.copy())
 
     if not hasattr(model, "layer4"):
         activations.pop("layer4")
@@ -150,6 +149,7 @@ def finetune_with_selectivity_regularizer(model, model_name, dataloaders,
                                           num_classes, alpha,
                                           num_epochs=10, lr=2e-04,
                                           criterion=nn.CrossEntropyLoss(),
+                                          print_frequency=10,
                                           gpu=0):
     if gpu is not None:
         device = torch.device(f"cuda:{gpu}")
@@ -160,8 +160,7 @@ def finetune_with_selectivity_regularizer(model, model_name, dataloaders,
     # Register hook and account for variations in num_layers
     temp = [None for _ in range(num_classes)]
     activations = dict(layer1=temp.copy(), layer2=temp.copy(), layer3=temp.copy(),
-                       layer4=temp.copy(),
-                       avgpool=temp.copy())
+                       layer4=temp.copy())
     hidden_outputs: Dict[str, torch.Tensor] = {}
     register_hook(model, activations, hidden_outputs)
     if not hasattr(model, "layer4"):
@@ -171,8 +170,7 @@ def finetune_with_selectivity_regularizer(model, model_name, dataloaders,
 
     def reset_activations(activations):
         activations = dict(layer1=temp.copy(), layer2=temp.copy(), layer3=temp.copy(),
-                           layer4=temp.copy(),
-                           avgpool=temp.copy())
+                           layer4=temp.copy())
         if not hasattr(model, "layer4"):
             activations.pop("layer4")
         if not hasattr(model, "avgpool") and "avgpool" in activations:
@@ -201,16 +199,18 @@ def finetune_with_selectivity_regularizer(model, model_name, dataloaders,
         total = 0
         with epoch_timer:
             for i, batch in enumerate(dataloaders["train"]):
-                with timer:
-                    images, labels = batch
+                images, labels = batch
                 with loop_timer:
                     images = images.to(device)
                     labels = labels.to(device)
                     outputs = model(images)
-                    activations = reset_activations(activations)
-                    prepare_activations(activations, hidden_outputs, labels, num_classes)
-                    num_labels = torch.bincount(labels, minlength=num_classes)
-                    mean_selectivity = selectivity_regularizer(activations, num_labels)
+                    with timer:
+                        activations = reset_activations(activations)
+                        prepare_activations(activations, hidden_outputs, labels, num_classes)
+                        num_labels = torch.bincount(labels, minlength=num_classes)
+                        mean_selectivity = selectivity_regularizer(activations, num_labels)
+                    print(f"Selectivity time {timer.time}")
+                    # loss = criterion(outputs, labels)
                     loss = criterion(outputs, labels) + alpha * (sum(mean_selectivity.values()) / len(activations))
                     correct += torch.sum(outputs.detach().argmax(1) == labels)
                     total += len(labels)
@@ -218,7 +218,7 @@ def finetune_with_selectivity_regularizer(model, model_name, dataloaders,
                     loss.backward()
                     optimizer.step()
                     total_loss += loss.item()
-                if (i+1) % 10 == 0:
+                if not (i+1) % print_frequency:
                     print(f"Epoch {epoch+1}, iteration {i+1}/{total_step}," +
                           f" correct {correct}/{total}",
                           f" average loss per batch {total_loss / 10}" +

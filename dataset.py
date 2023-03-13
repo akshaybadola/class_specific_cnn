@@ -198,8 +198,7 @@ def get_data(dataset_name: str, batch_size: Union[int, Dict[str, int]],
                            'test': val_transform}
         data = {x: datasets.ImageNet(root='./data/imagenet/ILSVRC',
                                      split=x,
-                                     transform=data_transforms[x],
-                                     download=False)
+                                     transform=data_transforms[x])
                 if y else None
                 for x, y in data_keys.items()}
         # if train_sampler:
