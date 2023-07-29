@@ -212,6 +212,12 @@ if __name__ == '__main__':
                         "Used only when --inds-file is not given.")
     parser.add_argument("--gpu", "-g", type=int, default=0, help="GPU to use for finetuning")
     args = parser.parse_args()
+    if args.cmd == "get_inds":
+        model, data, dataloaders, num_classes = get_model_and_data_from_args(args)
+        k = maybe_k(args.k)
+        indices = get_indices_final_layer(model, data, dataloaders, k, num_classes, args.layer_name)
+        with open(f"indices_{args.layer_name}.pkl", "wb") as f:
+            pickle.dump(indices, f)
     if args.cmd == "calc_mi":
         model, data, dataloaders, num_classes = get_model_and_data_from_args(args)
         k = maybe_k(args.k)

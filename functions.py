@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 import util
 import dataset
 import hooks
-import resnet_a_with_relu as resnet_a
+import resnet_a
 import resnet_b
 
 
