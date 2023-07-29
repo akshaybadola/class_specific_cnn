@@ -47,6 +47,16 @@ def main(model_name, batch_size, alpha, lr):
                                                    print_frequency=print_frequency)
 
 
+# def main(model_name):
+#     model, data, dataloaders, num_classes = get_model_and_data(model_name, 256)
+#     if model_name == "resnet50":
+#         print_frequency = 1
+#     else:
+#         print_frequency = 10
+#     result, output_matrix, corr_matrix = get_results_at_key(model, dataloaders, num_classes, key)
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("model", help="Name of the model")

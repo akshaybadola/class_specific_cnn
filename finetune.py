@@ -13,10 +13,10 @@ from class_selectivity_index.selectivity import (selectivity_regularizer,
                                                  calculate_selectivity_torch)
 
 
-def validate(model, val_loader, gpu=0):
+def validate(model, val_loader, gpu=0, print_only=False):
     timer = Timer(True)
     model = model.eval()
-    if util.have_cuda():
+    if util.have_cuda:
         device = torch.device(f"cuda:{gpu}")
     else:
         device = torch.device("cpu")
@@ -24,15 +24,12 @@ def validate(model, val_loader, gpu=0):
     correct = 0
     total = 0
     preds = {"preds": [], "labels": []}
-    vfunc = getattr(model, "forward", None) or getattr(model, "forward_std", None)
-    if vfunc is None:
-        raise AttributeError("No forward function found in model")
     with torch.no_grad():
         for i, batch in enumerate(val_loader):
             imgs, labels = batch
             imgs, labels = imgs.to(device), labels.to(device)
             with timer:
-                outputs = vfunc(imgs)
+                outputs = model(imgs)
             _preds = F.softmax(outputs, 1).argmax(1)
             correct += torch.sum(_preds == labels)
             preds["preds"].append(_preds.detach().cpu().numpy())
@@ -42,7 +39,10 @@ def validate(model, val_loader, gpu=0):
                 print(f"{(i / len(val_loader)) * 100} percent done in {timer.time} seconds")
                 print(f"Correct: {correct}, Total: {total}")
                 timer.clear()
-    return correct, total, preds
+    if print_only:
+        print(f"correct: {correct}, total: {total}, accuracy: {correct/total*100}")
+    else:
+        return correct, total, preds
 
 
 def finetune(model, model_name, dataloaders, num_epochs=10, lr=2e-04,
@@ -56,8 +56,6 @@ def finetune(model, model_name, dataloaders, num_epochs=10, lr=2e-04,
     total_step = len(dataloaders["train"])
     trainable_params = [x for x in model.parameters() if x.requires_grad]
     optimizer = torch.optim.Adam(trainable_params, lr=learning_rate)
-    # print("Validating small sample for model before training.")
-    # validate_subsample(model, dataloaders["val"], gpu)
     timer = Timer()
     epoch_timer = Timer(True)
     loop_timer = Timer()
@@ -95,12 +93,15 @@ def finetune(model, model_name, dataloaders, num_epochs=10, lr=2e-04,
         correct, total, _ = validate(model, dataloaders["val"], gpu)
         print(f"Correct {correct}/{total}")
         epoch_timer.clear()
+    torch.save({"state_dict": model.state_dict(),
+                "selectivities": selectivities},
+               f"{model_name}-decomposed.pth")
 
 
 def validate_with_selectivity(model, val_loader, num_classes, hidden_outputs, gpu=0):
     timer = Timer(True)
     model = model.eval()
-    if util.have_cuda():
+    if util.have_cuda and gpu is not None:
         device = torch.device(f"cuda:{gpu}")
     else:
         device = torch.device("cpu")
@@ -124,8 +125,7 @@ def validate_with_selectivity(model, val_loader, num_classes, hidden_outputs, gp
 
     with torch.no_grad():
         num_labels = torch.zeros(num_classes, dtype=torch.long)
-        if util.have_cuda():
-            num_labels = num_labels.cuda(gpu)
+        num_labels = num_labels.to(device)
         for i, batch in enumerate(val_loader):
             imgs, labels = batch
             imgs, labels = imgs.to(device), labels.to(device)
@@ -209,7 +209,7 @@ def finetune_with_selectivity_regularizer(model, model_name, dataloaders,
                         prepare_activations(activations, hidden_outputs, labels, num_classes)
                         num_labels = torch.bincount(labels, minlength=num_classes)
                         mean_selectivity = selectivity_regularizer(activations, num_labels)
-                    print(f"Selectivity time {timer.time}")
+                    # print(f"Selectivity time {timer.time}")
                     # loss = criterion(outputs, labels)
                     loss = criterion(outputs, labels) + alpha * (sum(mean_selectivity.values()) / len(activations))
                     correct += torch.sum(outputs.detach().argmax(1) == labels)

@@ -87,7 +87,7 @@ def _debug_hook(results, t, *x):
 
 
 def get_outputs_at(model, model_name, dataloaders, track_for, gpu=0):
-    if have_cuda():
+    if have_cuda:
         model = model.cuda(gpu)
     if model_name == "resnet20":
         layers = ["layer1", "layer2", "layer3"]
@@ -112,7 +112,7 @@ def get_outputs_at(model, model_name, dataloaders, track_for, gpu=0):
     with torch.no_grad():
         for i, batch in enumerate(dataloaders["train"]):
             imgs, _labels = batch
-            if have_cuda():
+            if have_cuda:
                 imgs = imgs.cuda(gpu)
             labels.append(_labels.cpu().numpy())
             _ = model.forward(imgs)

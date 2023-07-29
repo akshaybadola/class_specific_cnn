@@ -1,3 +1,4 @@
+from typing import Dict, List
 import importlib
 import numpy as np
 import torch
@@ -7,29 +8,72 @@ from matplotlib import pyplot as plt
 import util
 import dataset
 import hooks
-import original_resnet_a
+import resnet_a_with_relu as resnet_a
+import resnet_b
 
 
-def get_model_data():
-    model = original_resnet_a.resnet20(10)
-    weights = torch.load("resnet20-12fca82f.th", map_location="cpu")
-    util.load_fixing_names(model, weights)
-    if util.have_cuda():
-        model = model.cuda()
+from util import have_cuda
+
+
+def forward_get_labels(model, loader, gpu=0):
+    if have_cuda and gpu is not None:
+        model = model.cuda(gpu)
     model = model.eval()
-    data, dataloaders, num_classes = dataset.get_data("cifar-10",
-                                                      {"train": 128,
-                                                       "val": 64,
-                                                       "test": 64},
-                                                      {"train": 12,
-                                                       "val": 12,
-                                                       "test": 12})
+    model = model.cuda(gpu)
+    labels = []
+    total_iters = len(loader)
+    with torch.no_grad():
+        for i, batch in enumerate(loader):
+            imgs, _labels = batch
+            if have_cuda and gpu is not None:
+                imgs, _labels = imgs.cuda(gpu), _labels.cuda(gpu)
+            labels.append(_labels.cpu().numpy())
+            _ = model.forward(imgs)
+            if (i + 1) % 100 == 0:
+                print(f"Done {i+1} iterations out of {total_iters}")
+    return labels
+
+
+def get_model(model_name, weights_file, num_classes, **kwargs):
+    if model_name == "resnet20":
+        model = resnet_a.resnet20(num_classes, **kwargs)
+        weights = torch.load(weights_file, map_location="cpu")
+        util.load_fixing_names(model, weights)
+    elif model_name == "resnet50":
+        model = resnet_b.resnet50(num_classes, pretrained=True, **kwargs)
+    return model
+
+
+def get_model_and_data(model_name, weights_file, batch_size):
+    if model_name == "resnet20":
+        data, dataloaders, num_classes = dataset.get_data("cifar-10",
+                                                          {"train": batch_size,
+                                                           "val": 64,
+                                                           "test": 64},
+                                                          {"train": 12,
+                                                           "val": 12,
+                                                           "test": 12})
+        model = resnet_a.resnet20(num_classes)
+        weights = torch.load(weights_file, map_location="cpu")
+        util.load_fixing_names(model, weights)
+    elif model_name == "resnet50":
+        data, dataloaders, num_classes = dataset.get_data("imagenet",
+                                                          {"train": batch_size,
+                                                           "val": batch_size,
+                                                           "test": batch_size},
+                                                          {"train": 32,
+                                                           "val": 16,
+                                                           "test": 16})
+        model = resnet_b.resnet50(num_classes, pretrained=True)
     return model, data, dataloaders, num_classes
 
 
-def get_results_at_key(model, dataloaders, num_classes, key):
-    results, labels = hooks.get_outputs_at(model, "resnet20", dataloaders, key)
-    key = [*results.keys()][0]
+def collect_outputs_at_submodules(model, dataloaders, num_classes, key: str):
+    results: Dict[str, List] = {key: []}
+    module = model.get_submodule(key)
+    handle = module.register_forward_hook(lambda *x: results[key].append(x[-1]))
+    labels = forward_get_labels(model, dataloaders["train"])
+    handle.remove()
     for i, x in enumerate(results[key]):
         x = F.avg_pool2d(x, x.size()[3])
         x = x.view(x.size(0), -1)

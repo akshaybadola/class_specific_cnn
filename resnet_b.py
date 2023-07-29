@@ -107,7 +107,7 @@ class Bottleneck(nn.Module):
 class ResNetB(torch.nn.Module):
     def __init__(self, block, layers, num_classes=1000, zero_init_residual=False,
                  groups=1, width_per_group=64, replace_stride_with_dilation=None,
-                 norm_layer=None):
+                 norm_layer=None, indices=None):
         super().__init__()
         if norm_layer is None:
             norm_layer = nn.BatchNorm2d
@@ -159,6 +159,18 @@ class ResNetB(torch.nn.Module):
                 elif isinstance(m, BasicBlockB):
                     nn.init.constant_(m.bn2.weight, 0)
 
+        # Decompose weights. It's a view of self.linear
+        if self.indices is not None and len(self.indices):
+            self.final_weights = nn.Parameter(torch.stack([self.linear.weight.T[indices[i].tolist(), i]
+                                                           for i in range(len(indices))]))
+            self.final_bias = nn.Parameter(self.linear.bias)
+
+    def _init_final_weights(self):
+        self.final_weights.data.copy_(torch.stack(
+            [self.linear.weight.data.T[self.indices[i], i]
+             for i in range(len(self.indices))]))
+        self.final_bias.data = self.linear.bias.data.clone()
+
     def _make_layer(self, block, planes, blocks, stride=1, dilate=False, num_layer=None):
         norm_layer = self._norm_layer
         downsample = None
@@ -184,6 +196,40 @@ class ResNetB(torch.nn.Module):
                                 num_layer=num_layer, num_block=i))
 
         return nn.Sequential(*layers)
+
+    def head(self, x):
+        x = self.conv1(x)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = self.avgpool(x)
+        return x
+
+    def forward_decomposed(self, x):
+        x = self.head(x)
+        x = x.view(x.size(0), -1)
+        x = x[:, self.indices]
+        return ((x * self.final_weights).sum(-1) + self.final_bias)
+
+    def forward_noise_at_inds_for_label(self, x):
+        val_label = getattr(self, "_val_label", None)
+        inds = self.indices[-1][val_label]
+        invert_inds = set(range(512)) - set(inds)
+        invert_inds = np.array([*invert_inds])
+        if val_label is None:
+            raise AttributeError("Model has no attribute _val_label")
+        x = self.head(x)
+        x = F.avg_pool2d(x, x.size()[3])
+        x = x.view(x.size(0), -1)
+        x_1 = x.clone()
+        x_2 = x.clone()
+        x_1[:, inds] = torch.randn(x_1.shape[0], len(inds)).to(x_1.device)
+        x_2[:, invert_inds] = torch.randn(x_2.shape[0], len(invert_inds)).to(x_2.device)
+        return self.linear(x_1), self.linear(x_2)
 
     def _forward_impl(self, x):
         # See note [TorchScript super()]
