@@ -10,7 +10,7 @@
   We provide the filters for CIFAR-10 on the checkpoint given in file `resnet20-12fca82f.th`
 - There are also saved `decomposed` after fine-tuning with our method.
   And `regularized` weights after applying selectivity regularizer as given by Leavitt et al. in
-  Selectivity Considered Harmful (https://openreview.net/forum?id=8nl0k08uMi).
+  `Selectivity Considered Harmful` (https://openreview.net/forum?id=8nl0k08uMi).
 
 ## Usage
 
@@ -44,15 +44,27 @@ from "layer" 2.
 
 `python main.py get_inds --model resnet20 --weights resnet20-12fca82f.th --layer-name layer2.1.relu2 -k 5 -b 256 -g 0`
 
-This will store the indices in a file `indices_{layer2.1.relu2}.pkl`
+This will store the indices in a file `indices_layer2.1.relu2.pkl`
 
-### Calculating Selectivity \mu
+If you want top $k \in (0, 1)$ fraction for each class, you can do:
 
-The functions are there in `main.py`. Will write example later.
+`python main.py get_inds --model resnet20 --weights resnet20-12fca82f.th --layer-name layer2.1.relu2 -k .5 -b 256 -g 0`
 
-**TODO**
+Gives you top half most influential indices.
 
-### Calculating Selectivity \psi
+### Calculating Selectivity $\Psi$
+
+$\Psi$ for each layer and class $c$ is calculated at some $k$, $\Psi^c_k$. It gives a number $\in (0,1)$
+how selective each layer is towards a certain class. $k$ can be `float` or `int`. But in the paper
+we only calculated as `float` so it's only implemented like that. It gives you a dictionary of selectivity
+per class at some layer. To get that:
+
+`python main.py calc_psi --model resnet20 --weights resnet20-12fca82f.th --layer-name layer3.2 -k .5 -b 256 -g 0`
+
+
+### Calculating Selectivity $\mu$
+
+$\mu$ calculates the Selectivity as given by Leavitt et al.
 
 The functions are there in `main.py`. Will write example later.
 

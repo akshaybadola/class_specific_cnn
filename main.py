@@ -87,8 +87,8 @@ def calc_psi_at_fraction(output_matrix, k):
     inds = {}
     psi = {}
     sorted_output = {}
+    shape = output_matrix[0].shape
     for i in output_matrix:
-        shape = output_matrix[i].shape
         inds[i] = output_matrix[i].argsort(1)
         inds[i] = np.flip(inds[i], 1)
         sorted_output[i] = output_matrix[i][np.repeat(np.arange(shape[0]), shape[1]),
@@ -96,11 +96,64 @@ def calc_psi_at_fraction(output_matrix, k):
         # To get the k_th fraction weight
         sorted_output[i] = (sorted_output[i].T / sorted_output[i].sum(1)).T
         psi[i] = (np.median((sorted_output[i].cumsum(1) < k).sum(1)),
-                      np.mean((sorted_output[i].cumsum(1) < k).sum(1)))
+                  np.mean((sorted_output[i].cumsum(1) < k).sum(1)))
+        psi[i] = (shape[1] - psi[i][0])/shape[1], (shape[1] - psi[i][1])/shape[1]
     return psi
 
 
+def top_inds_at_k(output_matrix, k):
+    """Get most important indices at k
+    If k is integer, that's a hard threshold of top k inds.
+    If it's a float, it gives you top fraction 0 < k < 1 of indices.
+    In the float case, it may give you different number of indices
+    for each class
+
+    Args:
+        output_matrix: Output matrix at some layer
+        k: k
+
+
+    """
+    num_classes, dim = len(output_matrix), output_matrix[0].shape[1]
+    inds = {}
+    counts = {}
+    top_inds = {}
+    if isinstance(k, int):
+        for i in range(num_classes):
+            inds[i] = output_matrix[i].argsort(1)
+            inds[i] = np.flip(inds[i], 1)
+            counts[i] = np.bincount(inds[i][:, :k].flatten(), minlength=dim)
+            top_inds[i] = counts[i].argsort()[::-1][:k]
+        return top_inds
+    elif isinstance(k, float):
+        sorted_output = {}
+        for i in range(num_classes):
+            shape = output_matrix[i].shape
+            inds[i] = output_matrix[i].argsort(1)
+            inds[i] = np.flip(inds[i], 1)
+            sorted_output[i] = output_matrix[i][np.repeat(
+                np.arange(shape[0]), shape[1]), inds[i].flatten()].reshape(shape)
+            sorted_output[i] = (sorted_output[i].T / sorted_output[i].sum(1)).T
+            # num_indices at which fraction of output > k
+            _k = int((sorted_output[i].cumsum(1) < k).sum(1).mean())
+            # most frequent indices
+            freq_inds = np.bincount(inds[i][:, :_k].flatten(), minlength=dim)
+            # again threshold with fraction > k
+            freq_inds = freq_inds / freq_inds.sum()
+            top_inds[i] = freq_inds.argsort()[freq_inds[freq_inds.argsort()].cumsum() > k]
+        return top_inds
+
+
 def calc_pairwise_mi(output_matrix, k):
+    """Calculate pairwise Mutual Information of most influential indices
+    of each class.
+
+    Args:
+        output_matrix: Matrix of activations from some layer
+        k: Top k indices to take
+
+
+    """
     minlength = output_matrix[0].shape[1]
     mi = {}
     inds = {}
@@ -127,18 +180,10 @@ def calc_pairwise_mi(output_matrix, k):
     return mi
 
 
-def get_indices_final_layer(model, data, dataloaders, k, num_classes, submodule):
+def get_top_indices_at_layer(model, data, dataloaders, k, num_classes, submodule):
     result, output_matrix, corr_matrix = collect_outputs_at_submodules(
         model, dataloaders, num_classes, submodule)
-    inds = {i: None for i in range(num_classes)}
-    counts = {i: None for i in range(num_classes)}
-    top_inds = {i: None for i in range(num_classes)}
-    minlength = output_matrix[0].shape[1]
-    for i in range(num_classes):
-        inds[i] = output_matrix[i].argsort(1)
-        inds[i] = np.flip(inds[i], 1)
-        counts[i] = np.bincount(inds[i][:, :k].flatten(), minlength=minlength)
-        top_inds[i] = counts[i].argsort()[::-1][:k]
+    top_inds = top_inds_at_k(output_matrix, k)
     return top_inds
 
 
@@ -169,9 +214,9 @@ def do_finetune(args):
     if args.finetune_method == "decomposed":
         if not args.inds_file:
             if args.model == "resnet20":
-                indices = get_indices_final_layer(model, data, dataloaders, k, num_classes, "layer3.2")
+                indices = get_top_indices_at_layer(model, data, dataloaders, k, num_classes, "layer3.2")
             elif args.model == "resnet50":
-                indices = get_indices_final_layer(model, data, dataloaders, k, num_classes, "avgpool")
+                indices = get_top_indices_at_layer(model, data, dataloaders, k, num_classes, "avgpool")
         else:
             with open(args.inds_file) as f:
                 indices = json.load(f)
@@ -215,8 +260,8 @@ if __name__ == '__main__':
     if args.cmd == "get_inds":
         model, data, dataloaders, num_classes = get_model_and_data_from_args(args)
         k = maybe_k(args.k)
-        indices = get_indices_final_layer(model, data, dataloaders, k, num_classes, args.layer_name)
-        with open(f"indices_{args.layer_name}.pkl", "wb") as f:
+        indices = get_top_indices_at_layer(model, data, dataloaders, k, num_classes, args.layer_name)
+        with open(f"{args.model}_indices_{args.layer_name}.pkl", "wb") as f:
             pickle.dump(indices, f)
     if args.cmd == "calc_mi":
         model, data, dataloaders, num_classes = get_model_and_data_from_args(args)
@@ -227,9 +272,14 @@ if __name__ == '__main__':
     if args.cmd == "calc_psi":
         model, data, dataloaders, num_classes = get_model_and_data_from_args(args)
         k = maybe_k(args.k)
+        if isinstance(k, int):
+            raise TypeError("k must be float")
         result, output_matrix, corr_matrix = collect_outputs_at_submodules(
             model, dataloaders, num_classes, args.layer_name)
-        print(calc_psi_at_fraction(output_matrix, k))
+        psi = calc_psi_at_fraction(output_matrix, k)
+        print(f"Mean selectivity for layer {args.layer_name}: {np.mean([x[0] for x in psi.values()])}")
+        with open(f"{args.model}_psi_{args.layer_name}.pkl", "wb") as f:
+            pickle.dump(psi, f)
     elif args.cmd == "calc_mu":
         model, data, dataloaders, num_classes = get_model_and_data_from_args(args)
         result, output_matrix, corr_matrix = collect_outputs_at_submodules(
